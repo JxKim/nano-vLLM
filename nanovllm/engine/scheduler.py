@@ -78,13 +78,26 @@ class Scheduler:
     def preempt(self, seq: Sequence):
         """
         抢占一个序列，将其从运行队列中移除，添加到等待队列中
+
+        为什么需要preempt:
+        因为decode阶段，请求不是一次就结束的，而是每一轮只往前走一个token。
+        这意味着系统里可能同时有很多running请求，它们都占着自己的block。
+        如果大家一直占着不放，新的decode轮次，就可能没空间继续追加token了。
+
+        当 decode 阶段 KV cache 空间不够时，先把某个 running 请求踢回 waiting，并释放它占用的 block，从而给其它请求腾出继续执行的空间
         """
         seq.status = SequenceStatus.WAITING
         self.block_manager.deallocate(seq)
         self.waiting.appendleft(seq)
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
+        """
+        查看序列是否已生成完毕，将已经完毕的序列的状态置为finished，并将其从scheduler的running队列中移除
+        """
         for seq, token_id in zip(seqs, token_ids):
+            # seq和token_id什么关系：token_id是这个seq在本次前向传播过程当中，经过采样所得到的新的下一个token
+            # seq：append前：0,1,2... 15个token
+            # append后：0,1,2... 16个token
             seq.append_token(token_id)
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED

@@ -38,7 +38,7 @@ class Block:
 
 
 class BlockManager:
-
+    # 命中 prefix cache 时，seq间的 block 是共享关系，未命中时，seq间竞争使用free block
     def __init__(self, num_blocks: int, block_size: int):
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
@@ -79,6 +79,11 @@ class BlockManager:
         return len(self.free_block_ids) >= seq.num_blocks
 
     def allocate(self, seq: Sequence):
+        """
+        为一个序列分配block，将token_ids写入block中
+        如果token_ids在block中，直接增加引用计数
+        如果token_ids不在block中，创建新的block
+        """
         assert not seq.block_table
         h = -1
         cache_miss = False
@@ -104,6 +109,9 @@ class BlockManager:
             seq.block_table.append(block_id)
 
     def deallocate(self, seq: Sequence):
+        """
+        释放一个序列占用的block，将引用计数减1，如果引用计数为0，则将block归还给空闲池
+        """
         for block_id in reversed(seq.block_table):
             block = self.blocks[block_id]
             block.ref_count -= 1
@@ -118,15 +126,17 @@ class BlockManager:
     def may_append(self, seq: Sequence):
         """
         decode时的追加是“页式扩展”，而不是“整体重拷贝”
+        当一个序列准备继续生成下一个token时，该方法会判断：
+        需不需要给它新开一个block，或者当前block是否刚好已经填满
         """
         block_table = seq.block_table
         last_block = self.blocks[block_table[-1]]
-        if len(seq) % self.block_size == 1:
+        if len(seq) % self.block_size == 1: # 刚跨进一个新的block，需要分配新的block
             assert last_block.hash != -1
             block_id = self.free_block_ids[0]
             self._allocate_block(block_id)
             block_table.append(block_id)
-        elif len(seq) % self.block_size == 0:
+        elif len(seq) % self.block_size == 0: # 当前block刚好填满，需要计算hash，加入prefix cache索引
             assert last_block.hash == -1
             token_ids = seq.block(seq.num_blocks-1)
             prefix = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1

@@ -6,18 +6,22 @@ import triton.language as tl
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 from nanovllm.utils.context import get_context
 
-
+# @triton.jit: 把下面这个函数交给Triton编译成GPU kernel
 @triton.jit
 def store_kvcache_kernel(
-    key_ptr,
-    key_stride,
-    value_ptr,
+    key_ptr, # 新计算出来的key张量的起始地址
+    key_stride, # key张量相邻两个token在内存里隔多远
+    value_ptr, 
     value_stride,
     k_cache_ptr,
     v_cache_ptr,
     slot_mapping_ptr,
     D: tl.constexpr,
 ):
+    """
+    使用Triton自定义了一个GPU Kernel，专门做一件事情：
+    把当前这轮新算出来的key/value，按slot_mapping写到KV Cache的正确位置中
+    """
     idx = tl.program_id(0)
     slot = tl.load(slot_mapping_ptr + idx)
     if slot == -1: return

@@ -65,6 +65,9 @@ class Sequence:
         return self.num_tokens - (self.num_blocks - 1) * self.block_size
 
     def block(self, i):
+        """
+        从逻辑上，把自己的token序列，按block_size切成一块一块
+        """
         assert 0 <= i < self.num_blocks
         return self.token_ids[i*self.block_size: (i+1)*self.block_size]
 

@@ -1,3 +1,6 @@
+"""
+LLMEngine负责提供全局generate方法，用以在一个batch当中进行推理，并获取相应的结果
+"""
 import atexit
 from dataclasses import fields
 from time import perf_counter
@@ -49,8 +52,10 @@ class LLMEngine:
         """
         调度一批请求，执行一轮forward+sample，更新请求状态，把已完成请求吐出去
         """
+        # schedule()方法：选中本次前向传播，需要执行的序列 
         seqs, is_prefill = self.scheduler.schedule()
         token_ids = self.model_runner.call("run", seqs, is_prefill)
+        # postprocess方法：检查序列当中是否有已完成的序列，如果有，就将其从scheduler中移除
         self.scheduler.postprocess(seqs, token_ids)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         num_tokens = sum(len(seq) for seq in seqs) if is_prefill else -len(seqs)
@@ -72,10 +77,11 @@ class LLMEngine:
         for prompt, sp in zip(prompts, sampling_params):
             # 将所有请求，都添加到scheduler中
             self.add_request(prompt, sp)
-        outputs = {}
+        outputs = {} # 获取最终的结果
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():
             t = perf_counter()
+            # scheduler 执行一次 step
             output, num_tokens = self.step()
             if use_tqdm:
                 if num_tokens > 0:
